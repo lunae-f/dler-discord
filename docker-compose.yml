@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    # Dockerfileがあるディレクトリを指し、ビルドを実行
+    build: .
+    # コンテナが予期せず停止した場合に再起動
+    restart: unless-stopped
+    # .envファイルから環境変数を読み込む
+    env_file:
+      - .env
+    # ホストのマシンとネットワークを共有する設定
+    # これにより、botコンテナからホストのlocalhost(dler API)にアクセス可能になる
+    network_mode: "host"
