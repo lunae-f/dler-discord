@@ -22,28 +22,25 @@ DLER_API_BASE_URL = os.environ.get("DLER_API_BASE_URL", "http://localhost:8000")
 
 # --- ボタンのView ---
 class ActionView(discord.ui.View):
-    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=300):
+    # === タイムアウト時間を12時間(43200秒)に変更 ===
+    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=43200):
         super().__init__(timeout=timeout)
         self.task_id = task_id
         self.message = None
 
-        # === ここから変更 ===
         # 1. ダウンロードボタン (リンク)
-        self.add_item(discord.ui.Button(label="ダウンロード", style=discord.ButtonStyle.success, emoji="📥", url=download_url))
+        self.add_item(discord.ui.Button(label="DL", style=discord.ButtonStyle.success, emoji="📥", url=download_url))
         
         # 2. 元動画ボタン (リンク)
         self.add_item(discord.ui.Button(label="元動画", style=discord.ButtonStyle.secondary, emoji="🔗", url=original_url))
 
         # 3. サーバーから削除ボタン
-        # ボタンを作成し、コールバック関数を紐付ける
         delete_button = discord.ui.Button(label="削除", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="delete_button")
-        delete_button.callback = self.delete_button_callback # コールバックをここで設定
+        delete_button.callback = self.delete_button_callback
         self.add_item(delete_button)
-        # === ここまで変更 ===
 
     # 削除ボタンのコールバック関数
     async def delete_button_callback(self, interaction: discord.Interaction):
-        # interactionから押されたボタンを取得
         button = discord.utils.get(self.children, custom_id="delete_button")
         
         button.disabled = True
@@ -71,13 +68,46 @@ class ActionView(discord.ui.View):
             await interaction.followup.send(f"エラー: ファイルの削除に失敗しました。\n`{e}`", ephemeral=True)
             await interaction.message.edit(view=self)
 
+    # === タイムアウト時の処理を修正 ===
     async def on_timeout(self):
         if self.message:
+            logger.info(f"ボタンがタイムアウトしました。自動削除を開始します: task_id={self.task_id}")
+            
+            # 全てのボタンを無効化
             for item in self.children:
                 item.disabled = True
-            await self.message.edit(view=self)
-            logger.info(f"ボタンがタイムアウトしました: task_id={self.task_id}")
+            
+            # メッセージを「自動削除中...」に更新
+            timeout_embed = self.message.embeds[0]
+            timeout_embed.title = "⌛ 自動削除中..."
+            timeout_embed.description = "タイムアウトしたため、サーバーからファイルを自動的に削除しています。"
+            timeout_embed.color = discord.Color.orange()
+            await self.message.edit(embed=timeout_embed, view=self)
 
+            try:
+                # dler APIにDELETEリクエストを送信
+                response = requests.delete(f"{DLER_API_BASE_URL}/tasks/{self.task_id}")
+                response.raise_for_status()
+
+                logger.info(f"タイムアウトによる自動削除成功: task_id={self.task_id}")
+
+                # 元のメッセージを編集して削除完了を通知
+                final_embed = self.message.embeds[0]
+                final_embed.title = "🗑️ 自動削除完了"
+                final_embed.description = f"タイムアウトしたため、ファイルはサーバーから正常に削除されました。"
+                final_embed.color = discord.Color.default()
+
+                # ボタンをメッセージから削除
+                await self.message.edit(embed=final_embed, view=None)
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"タイムアウトによる自動削除中にエラーが発生: task_id={self.task_id}, エラー: {e}", exc_info=True)
+                # エラーが発生したことを通知
+                fail_embed = self.message.embeds[0]
+                fail_embed.title = "❌ 自動削除失敗"
+                fail_embed.description = f"タイムアウトによる自動削除中にエラーが発生しました。"
+                fail_embed.color = discord.Color.red()
+                await self.message.edit(embed=fail_embed, view=self)
 
 # --- Discord botの初期化 ---
 intents = discord.Intents.default()
