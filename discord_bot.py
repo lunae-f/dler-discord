@@ -27,7 +27,7 @@ class DeletionView(discord.ui.View):
         self.task_id = task_id
         self.message = None # 後でメッセージオブジェクトを格納
 
-    @discord.ui.button(label="サーバーから削除", style=discord.ButtonStyle.danger, emoji="🗑️")
+    @discord.ui.button(label="削除", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def delete_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         # ボタンを無効化し、ユーザーに処理中であることを示す
         button.disabled = True
