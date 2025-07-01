@@ -1,6 +1,6 @@
 # dler-discord
 
-`DLer`のAPIを利用して、Discord上から動画のダウンロードタスクを実行するためのBotです。
+[DLer](https://github.com/lunae-f/dler)のAPIを利用して、Discord上から動画のダウンロードタスクを実行するためのBotです。
 
 `/dler`コマンドを使って動画のURLを送信すると、`DLer`が動画のダウンロードを行い、完了後にダウンロードリンクを返信します。
 
