@@ -22,9 +22,10 @@ DLER_API_BASE_URL = os.environ.get("DLER_API_BASE_URL", "http://localhost:8000")
 
 # --- View定義 ---
 
-# ActionView: ダウンロード完了後のボタン（ダウンロード、元動画）
+# ActionView: ダウンロード完了後のボタン
 class ActionView(discord.ui.View):
-    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=43200): # 12時間タイムアウト
+    # === ダウンロードのタイムアウトを60分(3600秒)に変更 ===
+    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=3600):
         super().__init__(timeout=timeout)
         self.task_id = task_id
         self.message = None
@@ -60,21 +61,20 @@ class ActionView(discord.ui.View):
                 await self.message.edit(embed=fail_embed, view=self)
 
 
-# FormatSelectionView: 形式選択ボタン（動画、音声）
+# FormatSelectionView: 形式選択ボタン
 class FormatSelectionView(discord.ui.View):
+    # === ボタンのタイムアウトを5分(300秒)に変更 ===
     def __init__(self, url: str):
-        super().__init__(timeout=60) # 選択ボタンのタイムアウトは60秒
+        super().__init__(timeout=300) 
         self.url = url
 
     async def start_download(self, interaction: discord.Interaction, audio_only: bool):
-        # ボタンを無効化し、メッセージを編集
         for item in self.children:
             item.disabled = True
         
         format_text = "音声" if audio_only else "動画"
         await interaction.response.edit_message(content=f"「{format_text}」を選択しました。ダウンロードを開始します...", view=self)
         
-        # タスク実行
         await run_download_task(interaction, self.url, audio_only=audio_only)
 
     @discord.ui.button(label="動画", style=discord.ButtonStyle.primary, emoji="🎬")
@@ -91,7 +91,6 @@ class FormatSelectionView(discord.ui.View):
 async def run_download_task(interaction: discord.Interaction, url: str, audio_only: bool):
     """APIを呼び出してダウンロードタスクを実行し、状態をポーリングする"""
     
-    # 1. タスク作成
     try:
         logger.info(f"DLerにタスク作成リクエストを送信: {url}, audio_only={audio_only}")
         response = requests.post(
@@ -113,7 +112,6 @@ async def run_download_task(interaction: discord.Interaction, url: str, audio_on
         await interaction.edit_original_response(content=f"エラー: DLer APIへの接続に失敗しました。\n`{e}`", view=None)
         return
 
-    # 処理中メッセージの表示
     embed = discord.Embed(
         title="⌛ ダウンロード処理中...",
         description="ダウンロードを開始しました。\n完了までしばらくお待ちください。",
@@ -123,7 +121,6 @@ async def run_download_task(interaction: discord.Interaction, url: str, audio_on
     embed.set_footer(text=f"タスクID: {task_id}")
     await interaction.edit_original_response(content="", embed=embed, view=None)
 
-    # 2. ポーリング処理
     while True:
         try:
             await asyncio.sleep(3)
@@ -193,7 +190,7 @@ async def dler_command(ctx: discord.ApplicationContext, url: str):
     embed.add_field(name="対象URL", value=url)
     
     view = FormatSelectionView(url=url)
-    await ctx.respond(embed=embed, view=view, ephemeral=True) # ephemeral=Trueで本人にしか見えない
+    await ctx.respond(embed=embed, view=view, ephemeral=True)
 
 
 # --- Botの実行 ---
