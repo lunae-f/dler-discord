@@ -20,64 +20,23 @@ DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 DLER_API_BASE_URL = os.environ.get("DLER_API_BASE_URL", "http://localhost:8000")
 
 
-# --- ボタンのView ---
+# --- View定義 ---
+
+# ActionView: ダウンロード完了後のボタン（ダウンロード、元動画）
 class ActionView(discord.ui.View):
-    # === タイムアウト時間を12時間(43200秒)に変更 ===
-    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=43200):
+    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=43200): # 12時間タイムアウト
         super().__init__(timeout=timeout)
         self.task_id = task_id
         self.message = None
 
-        # 1. ダウンロードボタン (リンク)
-        self.add_item(discord.ui.Button(label="DL", style=discord.ButtonStyle.success, emoji="📥", url=download_url))
-        
-        # 2. 元動画ボタン (リンク)
+        self.add_item(discord.ui.Button(label="ダウンロード", style=discord.ButtonStyle.success, emoji="📥", url=download_url))
         self.add_item(discord.ui.Button(label="元動画", style=discord.ButtonStyle.secondary, emoji="🔗", url=original_url))
 
-        # 3. サーバーから削除ボタン
-        delete_button = discord.ui.Button(label="削除", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="delete_button")
-        delete_button.callback = self.delete_button_callback
-        self.add_item(delete_button)
-
-    # 削除ボタンのコールバック関数
-    async def delete_button_callback(self, interaction: discord.Interaction):
-        button = discord.utils.get(self.children, custom_id="delete_button")
-        
-        button.disabled = True
-        button.label = "削除中..."
-        await interaction.response.edit_message(view=self)
-
-        logger.info(f"削除ボタンがクリックされました: task_id={self.task_id}, ユーザー: {interaction.user.name}")
-
-        try:
-            response = requests.delete(f"{DLER_API_BASE_URL}/tasks/{self.task_id}")
-            response.raise_for_status()
-
-            logger.info(f"タスク削除成功: task_id={self.task_id}")
-
-            new_embed = interaction.message.embeds[0]
-            new_embed.title = "🗑️ 削除完了"
-            new_embed.description = f"ファイルはサーバーから正常に削除されました。"
-            new_embed.color = discord.Color.default()
-            
-            await interaction.message.edit(embed=new_embed, view=None)
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"タスク削除中にエラーが発生: task_id={self.task_id}, エラー: {e}", exc_info=True)
-            button.label = "削除失敗"
-            await interaction.followup.send(f"エラー: ファイルの削除に失敗しました。\n`{e}`", ephemeral=True)
-            await interaction.message.edit(view=self)
-
-    # === タイムアウト時の処理を修正 ===
     async def on_timeout(self):
         if self.message:
             logger.info(f"ボタンがタイムアウトしました。自動削除を開始します: task_id={self.task_id}")
-            
-            # 全てのボタンを無効化
             for item in self.children:
                 item.disabled = True
-            
-            # メッセージを「自動削除中...」に更新
             timeout_embed = self.message.embeds[0]
             timeout_embed.title = "⌛ 自動削除中..."
             timeout_embed.description = "タイムアウトしたため、サーバーからファイルを自動的に削除しています。"
@@ -85,74 +44,89 @@ class ActionView(discord.ui.View):
             await self.message.edit(embed=timeout_embed, view=self)
 
             try:
-                # dler APIにDELETEリクエストを送信
-                response = requests.delete(f"{DLER_API_BASE_URL}/tasks/{self.task_id}")
-                response.raise_for_status()
-
+                requests.delete(f"{DLER_API_BASE_URL}/tasks/{self.task_id}").raise_for_status()
                 logger.info(f"タイムアウトによる自動削除成功: task_id={self.task_id}")
-
-                # 元のメッセージを編集して削除完了を通知
                 final_embed = self.message.embeds[0]
                 final_embed.title = "🗑️ 自動削除完了"
-                final_embed.description = f"タイムアウトしたため、ファイルはサーバーから正常に削除されました。"
+                final_embed.description = "タイムアウトしたため、ファイルはサーバーから正常に削除されました。"
                 final_embed.color = discord.Color.default()
-
-                # ボタンをメッセージから削除
                 await self.message.edit(embed=final_embed, view=None)
-
             except requests.exceptions.RequestException as e:
                 logger.error(f"タイムアウトによる自動削除中にエラーが発生: task_id={self.task_id}, エラー: {e}", exc_info=True)
-                # エラーが発生したことを通知
                 fail_embed = self.message.embeds[0]
                 fail_embed.title = "❌ 自動削除失敗"
-                fail_embed.description = f"タイムアウトによる自動削除中にエラーが発生しました。"
+                fail_embed.description = "タイムアウトによる自動削除中にエラーが発生しました。"
                 fail_embed.color = discord.Color.red()
                 await self.message.edit(embed=fail_embed, view=self)
 
-# --- Discord botの初期化 ---
-intents = discord.Intents.default()
-bot = discord.Bot(intents=intents)
 
-@bot.event
-async def on_ready():
-    logger.info(f"{bot.user} としてログインしました")
-    logger.info(f"DLer APIのエンドポイント: {DLER_API_BASE_URL}")
+# FormatSelectionView: 形式選択ボタン（動画、音声）
+class FormatSelectionView(discord.ui.View):
+    def __init__(self, url: str):
+        super().__init__(timeout=60) # 選択ボタンのタイムアウトは60秒
+        self.url = url
 
-@bot.slash_command(name="dler", description="DLer APIを使って動画をダウンロードします。")
-async def dler_command(ctx: discord.ApplicationContext, url: str):
-    logger.info(f"コマンド受信: /dler, URL: {url}, サーバー: {ctx.guild.name}, ユーザー: {ctx.author.name}")
-    interaction = await ctx.respond("処理を開始します...", ephemeral=False)
+    async def start_download(self, interaction: discord.Interaction, audio_only: bool):
+        # ボタンを無効化し、メッセージを編集
+        for item in self.children:
+            item.disabled = True
+        
+        format_text = "音声" if audio_only else "動画"
+        await interaction.response.edit_message(content=f"「{format_text}」を選択しました。ダウンロードを開始します...", view=self)
+        
+        # タスク実行
+        await run_download_task(interaction, self.url, audio_only=audio_only)
 
+    @discord.ui.button(label="動画", style=discord.ButtonStyle.primary, emoji="🎬")
+    async def video_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.start_download(interaction, audio_only=False)
+
+    @discord.ui.button(label="音声", style=discord.ButtonStyle.secondary, emoji="🎵")
+    async def audio_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.start_download(interaction, audio_only=True)
+
+
+# --- Botのロジック ---
+
+async def run_download_task(interaction: discord.Interaction, url: str, audio_only: bool):
+    """APIを呼び出してダウンロードタスクを実行し、状態をポーリングする"""
+    
+    # 1. タスク作成
     try:
-        logger.info(f"DLerにタスク作成リクエストを送信: {url}")
-        create_task_response = requests.post(f"{DLER_API_BASE_URL}/tasks", json={"url": url})
-        create_task_response.raise_for_status()
-        task_data = create_task_response.json()
+        logger.info(f"DLerにタスク作成リクエストを送信: {url}, audio_only={audio_only}")
+        response = requests.post(
+            f"{DLER_API_BASE_URL}/tasks",
+            json={"url": url, "audio_only": audio_only}
+        )
+        response.raise_for_status()
+        task_data = response.json()
         task_id = task_data.get("task_id")
 
         if not task_id:
             logger.error("タスク作成レスポンスにtask_idが含まれていません。")
-            await interaction.edit_original_response(content="エラー: タスクIDの取得に失敗しました。")
+            await interaction.edit_original_response(content="エラー: タスクIDの取得に失敗しました。", view=None)
             return
-        
         logger.info(f"タスク作成成功: task_id={task_id}")
 
     except requests.exceptions.RequestException as e:
         logger.error(f"DLer APIへの接続に失敗しました: {e}", exc_info=True)
-        await interaction.edit_original_response(content=f"エラー: DLer APIへの接続に失敗しました。\n`{e}`")
+        await interaction.edit_original_response(content=f"エラー: DLer APIへの接続に失敗しました。\n`{e}`", view=None)
         return
 
+    # 処理中メッセージの表示
     embed = discord.Embed(
         title="⌛ ダウンロード処理中...",
-        description="動画のダウンロードを開始しました。\n完了までしばらくお待ちください。",
+        description="ダウンロードを開始しました。\n完了までしばらくお待ちください。",
         color=discord.Color.blue()
     )
     embed.add_field(name="対象URL", value=url, inline=False)
     embed.set_footer(text=f"タスクID: {task_id}")
-    await interaction.edit_original_response(content="", embed=embed)
+    await interaction.edit_original_response(content="", embed=embed, view=None)
 
+    # 2. ポーリング処理
     while True:
         try:
+            await asyncio.sleep(3)
             logger.info(f"タスク状態を確認中: task_id={task_id}")
             status_response = requests.get(f"{DLER_API_BASE_URL}/tasks/{task_id}")
             status_response.raise_for_status()
@@ -163,26 +137,25 @@ async def dler_command(ctx: discord.ApplicationContext, url: str):
             if task_status == "SUCCESS":
                 download_url_path = status_data.get("download_url")
                 full_download_url = f"{DLER_API_BASE_URL}{download_url_path}"
-                original_filename = status_data.get("details", {}).get("original_filename", "video.mp4")
+                original_filename = status_data.get("details", {}).get("original_filename", "file")
                 
                 logger.info(f"タスク成功: task_id={task_id}, ファイル名: {original_filename}")
 
-                embed = discord.Embed(
+                success_embed = discord.Embed(
                     title="✅ ダウンロード準備完了",
                     description=f"ファイル名: `{original_filename}`",
                     color=discord.Color.green()
                 )
-                embed.set_footer(text=f"タスクID: {task_id}")
-
+                success_embed.set_footer(text=f"タスクID: {task_id}")
+                
                 view = ActionView(task_id=task_id, download_url=full_download_url, original_url=url)
-                message = await interaction.edit_original_response(content="", embed=embed, view=view)
+                message = await interaction.edit_original_response(embed=success_embed, view=view)
                 view.message = message
                 break
 
             elif task_status == "FAILURE":
                 error_details = status_data.get("details", "不明なエラー")
                 logger.error(f"タスク失敗: task_id={task_id}, 理由: {error_details}")
-
                 fail_embed = discord.Embed(
                     title="❌ ダウンロード失敗",
                     description=f"理由: `{error_details}`",
@@ -190,17 +163,40 @@ async def dler_command(ctx: discord.ApplicationContext, url: str):
                 )
                 fail_embed.add_field(name="対象URL", value=url, inline=False)
                 fail_embed.set_footer(text=f"タスクID: {task_id}")
-                await interaction.edit_original_response(embed=fail_embed)
+                await interaction.edit_original_response(embed=fail_embed, view=None)
                 break
-
-            await asyncio.sleep(3)
 
         except requests.exceptions.RequestException as e:
             logger.error(f"タスク状態の取得中にエラーが発生しました: task_id={task_id}, エラー: {e}", exc_info=True)
-            await interaction.edit_original_response(content=f"エラー: タスク状態の取得中にエラーが発生しました。\n`{e}`")
+            await interaction.edit_original_response(content=f"エラー: タスク状態の取得中にエラーが発生しました。\n`{e}`", view=None)
             break
 
-# --- botの実行 ---
+
+# --- Discord Bot コマンド ---
+intents = discord.Intents.default()
+bot = discord.Bot(intents=intents)
+
+@bot.event
+async def on_ready():
+    logger.info(f"{bot.user} としてログインしました")
+    logger.info(f"DLer APIのエンドポイント: {DLER_API_BASE_URL}")
+
+@bot.slash_command(name="dler", description="URLを指定して動画または音声をダウンロードします。")
+async def dler_command(ctx: discord.ApplicationContext, url: str):
+    logger.info(f"コマンド受信: /dler, URL: {url}, サーバー: {ctx.guild.name}, ユーザー: {ctx.author.name}")
+    
+    embed = discord.Embed(
+        title="ダウンロード形式の選択",
+        description="ダウンロードする形式を選択してください。",
+        color=discord.Color.blurple()
+    )
+    embed.add_field(name="対象URL", value=url)
+    
+    view = FormatSelectionView(url=url)
+    await ctx.respond(embed=embed, view=view, ephemeral=True) # ephemeral=Trueで本人にしか見えない
+
+
+# --- Botの実行 ---
 if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         logger.critical("環境変数 `DISCORD_BOT_TOKEN` が設定されていません。")
