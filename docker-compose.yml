@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  discord-bot:
+  bot:
     # Dockerfileがあるディレクトリを指し、ビルドを実行
     build: .
     # コンテナが予期せず停止した場合に再起動
