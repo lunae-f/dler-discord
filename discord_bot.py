@@ -17,15 +17,17 @@ logger = logging.getLogger(__name__)
 
 # --- 設定 ---
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
-DLER_API_BASE_URL = os.environ.get("DLER_API_BASE_URL", "http://localhost:8000")
+# API接続用の内部URL
+DLER_API_BASE_URL = os.environ.get("DLER_API_BASE_URL")
+# Discord表示用の外部URL (未設定ならAPI用と同じURLを使う)
+DLER_DISPLAY_URL = os.environ.get("DLER_DISPLAY_URL", DLER_API_BASE_URL)
 
 
 # --- View定義 ---
 
 # ActionView: ダウンロード完了後のボタン
 class ActionView(discord.ui.View):
-    # === ダウンロードのタイムアウトを60分(3600秒)に変更 ===
-    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=3600):
+    def __init__(self, task_id: str, download_url: str, original_url: str, *, timeout=3600): # 60分タイムアウト
         super().__init__(timeout=timeout)
         self.task_id = task_id
         self.message = None
@@ -63,9 +65,8 @@ class ActionView(discord.ui.View):
 
 # FormatSelectionView: 形式選択ボタン
 class FormatSelectionView(discord.ui.View):
-    # === ボタンのタイムアウトを5分(300秒)に変更 ===
     def __init__(self, url: str):
-        super().__init__(timeout=300) 
+        super().__init__(timeout=300) # 5分タイムアウト
         self.url = url
 
     async def start_download(self, interaction: discord.Interaction, audio_only: bool):
@@ -133,7 +134,10 @@ async def run_download_task(interaction: discord.Interaction, url: str, audio_on
 
             if task_status == "SUCCESS":
                 download_url_path = status_data.get("download_url")
-                full_download_url = f"{DLER_API_BASE_URL}{download_url_path}"
+                
+                # === ここで表示用URLを使うように変更 ===
+                full_download_url = f"{DLER_DISPLAY_URL}{download_url_path}"
+                
                 original_filename = status_data.get("details", {}).get("original_filename", "file")
                 
                 logger.info(f"タスク成功: task_id={task_id}, ファイル名: {original_filename}")
@@ -176,7 +180,8 @@ bot = discord.Bot(intents=intents)
 @bot.event
 async def on_ready():
     logger.info(f"{bot.user} としてログインしました")
-    logger.info(f"DLer APIのエンドポイント: {DLER_API_BASE_URL}")
+    logger.info(f"API接続用URL: {DLER_API_BASE_URL}")
+    logger.info(f"Discord表示用URL: {DLER_DISPLAY_URL}")
 
 @bot.slash_command(name="dler", description="URLを指定して動画または音声をダウンロードします。")
 async def dler_command(ctx: discord.ApplicationContext, url: str):
@@ -195,7 +200,7 @@ async def dler_command(ctx: discord.ApplicationContext, url: str):
 
 # --- Botの実行 ---
 if __name__ == "__main__":
-    if not DISCORD_BOT_TOKEN:
-        logger.critical("環境変数 `DISCORD_BOT_TOKEN` が設定されていません。")
+    if not DISCORD_BOT_TOKEN or not DLER_API_BASE_URL:
+        logger.critical("環境変数 `DISCORD_BOT_TOKEN` または `DLER_API_BASE_URL` が設定されていません。")
     else:
         bot.run(DISCORD_BOT_TOKEN)
