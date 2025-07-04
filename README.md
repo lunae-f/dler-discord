@@ -38,7 +38,7 @@
 git clone https://github.com/lunae-f/dler-discord
 cd dler-discord
 ```
-2. .envを編集します
+2. `.env`を編集します
 
 ### 3. サーバーの起動
 ```sh
